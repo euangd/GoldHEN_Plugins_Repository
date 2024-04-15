@@ -54,6 +54,8 @@ jobs:
       run: |
          curl -sL https://github.com/illusion0001/OpenOrbis-PS4-Toolchain/releases/latest/download/toolchain.tar.gz | tar xz -C ./
          rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/string.h
+         rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/strings.h
+         rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/c++/v1/string.h
          
     - name: Install mini xml
       working-directory: mxml/ps4

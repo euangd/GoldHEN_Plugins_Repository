@@ -45,7 +45,7 @@ jobs:
 
     - name: Setup variables
       run: |
-        sudo apt install llvm lld
+        sudo apt install llvm lld build-essential
         echo "OO_PS4_TOOLCHAIN=$GITHUB_WORKSPACE/OpenOrbis/PS4Toolchain" >> $GITHUB_ENV
         echo "commit_ver=1.$(git rev-list HEAD --count)" >> $GITHUB_ENV
         echo "commit_hash=$(echo ${GITHUB_SHA} | cut -c1-8)" >> $GITHUB_ENV

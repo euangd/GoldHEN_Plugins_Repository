@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include <Common.h>
 #include "plugin_common.h"
@@ -1487,3 +1491,7 @@ typedef struct notify_request {
 	char useless1[45];
 	char message[3075];
 } notify_request_t;
+
+#ifdef __cplusplus
+extern "C" {
+#endif

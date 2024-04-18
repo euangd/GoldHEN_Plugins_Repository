@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <Common.h>
 #include "plugin_common.h"
 #include "global.h"
@@ -19,3 +23,7 @@ enum SomeEnum
 {
 	SOME_ENUM_MEMBER = 1
 };
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,3 +1,7 @@
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "defines.h"
 #include "functions.h"
 #include "global.h"
@@ -11,3 +15,7 @@ bool init = false;
 bool superJump = false;
 bool explosiveAmmo = false;
 bool explosiveMelee = false;
+
+#ifdef __cplusplus
+}
+#endif

@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "types.h"
 #include <Common.h>
 #include "plugin_common.h"
@@ -23,3 +27,8 @@ void NOP(uint64_t address, size_t length);
 void uartprintf(const char *fmt, ...);
 void Notify(const char *fmt, ...);
 void CreateThread(void *entry, const char *name);
+
+
+#ifdef __cplusplus
+}
+#endif

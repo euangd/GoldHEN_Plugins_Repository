@@ -1,19 +1,23 @@
-// Game Patch: Patches game before boot.
-// Author: illusion0001 @ https://github.com/illusion0001
-// Repository: https://github.com/GoldHEN/GoldHEN_Plugins_Repository
+#include <stdint.h>
+#include <stdarg.h>
 
-#include <mxml.h>
-#include "patch.h"
-#include "utils.h"
-
+#include "defines.h"
+#include "detour.h"
+#include "functions.h"
+#include "global.h"
+#include "hooks.h"
+#include "imports.h"
+#include "utility.h"
+#include "types.h"
+#include "natives.h"
+#include "addresses.h"
 #define GOLDHEN_PATH_ (const char*) GOLDHEN_PATH
 #define BASE_PATH_PATCH (const char*) GOLDHEN_PATH_ "/patches"
 #define BASE_PATH_PATCH_SETTINGS (const char*) BASE_PATH_PATCH "/settings"
-#define BASE_PATH_PATCH_XML (const char*) BASE_PATH_PATCH "/xml"
-#define PLUGIN_NAME (const char*) "game_patch"
-#define PLUGIN_DESC (const char*) "Patches game at boot"
-#define PLUGIN_AUTH (const char*) "illusion"
-#define PLUGIN_VER 0x110 // 1.10
+#define PLUGIN_NAME (const char*) "GoldenQueef"
+#define PLUGIN_DESC (const char*) "BeefQueef Menu Base"
+#define PLUGIN_AUTH (const char*) "rfoodxmodz"
+#define PLUGIN_VER 0x148 // 1.48
 
 #define NO_ASLR_ADDR 0x00400000
 
@@ -22,274 +26,121 @@ attr_public const char *g_pluginDesc = PLUGIN_DESC;
 attr_public const char *g_pluginAuth = PLUGIN_AUTH;
 attr_public u32 g_pluginVersion = PLUGIN_VER;
 
-char g_titleid[16] = {0};
-char g_game_elf[MAX_PATH_] = {0};
-char g_game_prx[MAX_PATH_] = {0};
-char g_game_ver[8] = {0};
+char titleid[16] = {0};
+char game_elf[32] = {0};
+char game_prx[MAX_PATH_] = {0};
+char game_ver[8] = {0};
 
-u64 g_module_base = 0;
-u32 g_module_size = 0;
+u64 module_base = 0;
+u32 module_size = 0;
 // unused for now
-bool g_PRX = false;
-u64 g_PRX_module_base = 0;
-u32 g_PRX_module_size = 0;
+u64 PRX_module_base = 0;
+u32 PRX_module_size = 0;
+struct proc_info procInfo;
+long APP_BASE = 0x400000;
 
-const char* GetXMLAttr(mxml_node_t *node, const char *name)
+
+// https://github.com/bucanero/apollo-ps4/blob/a530cae3c81639eedebac606c67322acd6fa8965/source/orbis_jbc.c#L62
+int get_module_info(OrbisKernelModuleInfo moduleInfo, const char* name, uint64_t *base, uint32_t *size)
 {
-    const char* AttrData = mxmlElementGetAttr(node, name);
-    if (AttrData == NULL) AttrData = "\0";
-    return AttrData;
-}
-
-void get_key_init(void)
-{
-    u32 patch_lines = 0;
-    u32 patch_items = 0;
-    char *patch_buffer = nullptr;
-    u64 patch_size = 0;
-    char input_file[MAX_PATH_] = {0};
-    snprintf(input_file, sizeof(input_file), BASE_PATH_PATCH_XML "/%s.xml", g_titleid);
-    s32 res = Read_File(input_file, &patch_buffer, &patch_size, 0);
-
-    if (res)
+    OrbisKernelModule handles[256];
+    size_t numModules;
+    int ret = 0;
+    ret = sceKernelGetModuleList(handles, sizeof(handles), &numModules);
+    if (ret)
     {
-        final_printf("file %s not found\n", input_file);
-        final_printf("error: 0x%08x\n", res);
-        return;
+        final_printf("sceKernelGetModuleList (0x%08x)\n", ret);
+        return ret;
     }
-
-    if (patch_buffer && patch_size)
+    final_printf("numModules: %li\n", numModules);
+    for (size_t i = 0; i < numModules; ++i)
     {
-        mxml_node_t *node, *tree = NULL;
-        tree = mxmlLoadString(NULL, patch_buffer, MXML_NO_CALLBACK);
-
-        if (!tree)
+        ret = sceKernelGetModuleInfo(handles[i], &moduleInfo);
+        final_printf("ret 0x%x\n", ret);
+        final_printf("module %li\n", i);
+        final_printf("name: %s\n", moduleInfo.name);
+        final_printf("start: 0x%lx\n", (uint64_t)moduleInfo.segmentInfo[0].address);
+        final_printf("size: %u (0x%x)\n", moduleInfo.segmentInfo[0].size, moduleInfo.segmentInfo[0].size);
+        if (ret)
         {
-            final_printf("XML: could not parse XML:\n%s\n", patch_buffer);
-            free(patch_buffer);
-            return;
+            final_printf("sceKernelGetModuleInfo (%X)\n", ret);
+            return ret;
         }
 
-        for (node = mxmlFindElement(tree, tree, "Metadata", NULL, NULL, MXML_DESCEND); node != NULL;
-             node = mxmlFindElement(node, tree, "Metadata", NULL, NULL, MXML_DESCEND))
+        if (strcmp(moduleInfo.name, name) == 0 || name[0] == '0')
         {
-            char* settings_buffer = nullptr;
-            u64 settings_size = 0;
-            bool PRX_patch = false;
-            const char *TitleData = GetXMLAttr(node, "Title");
-            const char *NameData = GetXMLAttr(node, "Name");
-            const char *AppVerData = GetXMLAttr(node, "AppVer");
-            const char *AppElfData = GetXMLAttr(node, "AppElf");
+            if (base)
+                *base = (uint64_t)moduleInfo.segmentInfo[0].address;
 
-            debug_printf("Title: \"%s\"\n", TitleData);
-            debug_printf("Name: \"%s\"\n", NameData);
-            debug_printf("AppVer: \"%s\"\n", AppVerData);
-            debug_printf("AppElf: \"%s\"\n", AppElfData);
-
-            u64 hashout = patch_hash_calc(TitleData, NameData, AppVerData, input_file, AppElfData);
-            char settings_path[MAX_PATH_] = {0};
-            snprintf(settings_path, sizeof(settings_path), BASE_PATH_PATCH_SETTINGS "/0x%016lx.txt", hashout);
-            sceKernelChmod(settings_path, 0777);
-            s32 res = Read_File(settings_path, &settings_buffer, &settings_size, 0);
-            final_printf("settings_path: %s, 0x%08x\n", settings_path, res);
-            if (res == ORBIS_KERNEL_ERROR_ENOENT)
-            {
-                debug_printf("file %s not found, initializing false. ret: 0x%08x\n", settings_path, res);
-                u8 false_data[] = {'0', '\n'};
-                Write_File(settings_path, false_data, sizeof(false_data));
-                continue;
-            }
-            if (!settings_buffer || !settings_size)
-            {
-                final_printf("Settings 0x%016lx has no data!\n", hashout);
-                final_printf("File size %li bytes\n", settings_size);
-                continue;
-            }
-            if (settings_buffer[0] == '1' && !strcmp(g_game_elf, AppElfData))
-            {
-                s32 ret_cmp = strcmp(g_game_ver, AppVerData);
-                if (!ret_cmp)
-                {
-                    final_printf("App ver %s == %s\n", g_game_ver, AppVerData);
-                }
-                else if (startsWith(AppVerData, "mask") || startsWith(AppVerData, "all"))
-                {
-                    final_printf("App ver masked: %s\n", AppVerData);
-                }
-                else if (ret_cmp)
-                {
-                    final_printf("App ver %s != %s\n", g_game_ver, AppVerData);
-                    final_printf("Skipping patch entry\n");
-                    continue;
-                }
-                patch_items++;
-                mxml_node_t *Patchlist_node = mxmlFindElement(node, node, "PatchList", NULL, NULL, MXML_DESCEND);
-                for (mxml_node_t *Line_node = mxmlFindElement(node, node, "Line", NULL, NULL, MXML_DESCEND); Line_node != NULL;
-                                  Line_node = mxmlFindElement(Line_node, Patchlist_node, "Line", NULL, NULL, MXML_DESCEND))
-                {
-                    u64 addr_real = 0;
-                    u64 jump_addr = 0;
-                    u32 jump_size = 0;
-                    bool use_mask = false;
-                    const char *gameType = GetXMLAttr(Line_node, "Type");
-                    const char *gameAddr = GetXMLAttr(Line_node, "Address");
-                    const char *gameValue = GetXMLAttr(Line_node, "Value");
-                    const char *gameOffset = nullptr;
-                    // starts with `mask`
-                    if (startsWith(gameType, "mask"))
-                    {
-                        use_mask = true;
-                    }
-                    if (use_mask)
-                    {
-                        if (startsWith(gameType, "mask_jump32"))
-                        {
-                            const char* gameJumpTarget = GetXMLAttr(Line_node, "Target");
-                            const char* gameJumpSize = GetXMLAttr(Line_node, "Size");
-                            jump_addr = addr_real = (uint64_t)PatternScan(g_module_base, g_module_size, gameJumpTarget);
-                            jump_size = strtoul(gameJumpSize, NULL, 10);
-                            debug_printf("Target: 0x%lx jump size %u\n", jump_addr, jump_size);
-                        }
-                        gameOffset = GetXMLAttr(Line_node, "Offset");
-                        addr_real = (uint64_t)PatternScan(g_module_base, g_module_size, gameAddr);
-                        if (!addr_real)
-                        {
-                            final_printf("Masked Address: %s not found\n", gameAddr);
-                            continue;
-                        }
-                        final_printf("Masked Address: 0x%lx\n", addr_real);
-                        debug_printf("Offset: %s\n", gameOffset);
-                        u32 real_offset = 0;
-                        if (gameOffset[0] != '0')
-                        {
-                            if (gameOffset[0] == '-')
-                            {
-                                debug_printf("Offset mode: subtract\n");
-                                real_offset = strtoul(gameOffset + 1, NULL, 10);
-                                debug_printf("before offset: 0x%lx\n", addr_real);
-                                addr_real = addr_real - real_offset;
-                                debug_printf("after offset: 0x%lx\n", addr_real);
-                            }
-                            else if (gameOffset[0] == '+')
-                            {
-                                debug_printf("Offset mode: addition\n");
-                                real_offset = strtoul(gameOffset + 1, NULL, 10);
-                                debug_printf("before offset: 0x%lx\n", addr_real);
-                                addr_real = addr_real + real_offset;
-                                debug_printf("after offset: 0x%lx\n", addr_real);
-                            }
-                        }
-                        else
-                        {
-                            debug_printf("Mask does not reqiure offsetting.\n");
-                        }
-                    }
-                    debug_printf("Type: \"%s\"\n", gameType);
-                    if (gameAddr && !use_mask)
-                    {
-                        addr_real = strtoull(gameAddr, NULL, 16);
-                        debug_printf("Address: 0x%lx\n", addr_real);
-                    }
-                    debug_printf("Value: \"%s\"\n", gameValue);
-                    debug_printf("patch line: %u\n", patch_lines);
-                    if (gameType && addr_real && *gameValue != '\0') // type, address and value must be present
-                    {
-                        if (!PRX_patch && !use_mask)
-                        {
-                            // previous self, eboot patches were made with no aslr addresses
-                            addr_real = g_module_base + (addr_real - NO_ASLR_ADDR);
-                        }
-                        else if (PRX_patch && !use_mask)
-                        {
-                            addr_real = g_module_base + addr_real;
-                        }
-                        patch_data1(gameType, addr_real, gameValue, jump_size, jump_addr);
-                        patch_lines++;
-                    }
-                }
-            }
-            if (settings_buffer)
-            {
-                free(settings_buffer);
-            }
-        }
-
-        mxmlDelete(node);
-        mxmlDelete(tree);
-        free(patch_buffer);
-
-        if (patch_items > 0 && patch_lines > 0)
-        {
-            char msg[128] = {0};
-            snprintf(msg, sizeof(msg), "%u %s Applied\n"
-                                       "%u %s Applied",
-                                       patch_items, (patch_items == 1) ? "Patch" : "Patches",
-                                       patch_lines, (patch_lines == 1) ? "Patch Line" : "Patch Lines");
-            NotifyStatic(TEX_ICON_SYSTEM, msg);
+            if (size)
+                *size = moduleInfo.segmentInfo[0].size;
+            return 1;
         }
     }
-    else // if (!patch_buffer && !patch_size)
-    {
-        char msg[128] = {0};
-        snprintf(msg, sizeof(msg), "File %s\nis empty", input_file);
-        NotifyStatic(TEX_ICON_SYSTEM, msg);
-    }
+    return 0;
 }
-
-void mkdir_chmod(const char *path, OrbisKernelMode mode)
-{
-    sceKernelMkdir(path, mode);
-    sceKernelChmod(path, mode);
+void* my_thread(void* args) {
+    /*u64  registerN_addr = (uint64_t)0x27B4AD0 + APP_BASE;
+    memcpy_p((registerN_addr), "\x55\x48\x89\xE5\x41\x57\x41\x56\x41\x55\x41\x54\x53\x50\x49\x89\xD6", 17);
+    Hooks::registerNative_Stub = (Hooks::registerNative_t)DetourFunction((registerN_addr), (void *)Hooks::registerNative_hook, 17);
+	*/
+	u64 isonline_addr = (uint64_t)0xBFB4B0 + APP_BASE;//0xBFB4B0 1.46
+	WriteJump(isonline_addr, (uint64_t)Hooks::main_Hook);
+    scePthreadExit(NULL);
+    return NULL;
 }
-
-void make_folders(void)
-{
-    mkdir_chmod(GOLDHEN_PATH_, 0777);
-    mkdir_chmod(BASE_PATH_PATCH, 0777);
-    mkdir_chmod(BASE_PATH_PATCH_XML, 0777);
-    mkdir_chmod(BASE_PATH_PATCH_SETTINGS, 0777);
+unsigned int CRC32(const char* str) {
+	size_t textLen = strlen(str);
+	//int i = 0;
+	unsigned int retHash = 0;
+	//
+	for (int i = 0; i < textLen; i++)
+	{
+		if (str[0] == '"')
+		i = 1;
+		char ctext = str[i];
+		if (ctext == '"')
+		break;
+		if (ctext - 65 > 25)
+		{
+			if (ctext == '\\')
+			ctext = '/';
+		}
+		else ctext += 32;
+		retHash = (1032 * (retHash + ctext) >> 8) ^ 1032 * (retHash + ctext);
+	}
+	return 32769 * (9 * retHash ^ (10 * retHash >> 11));
 }
-
 extern "C" {
-s32 attr_public plugin_load(s32 argc, const char* argv[]) {
+s32 attr_module_hidden module_start(size_t argc, const void *args) {
     final_printf("[GoldHEN] <%s\\Ver.0x%08x> %s\n", g_pluginName, g_pluginVersion, __func__);
     final_printf("[GoldHEN] Plugin Author(s): %s\n", g_pluginAuth);
     boot_ver();
-    proc_info procInfo{};
-    OrbisKernelModuleInfo CurrentModuleInfo{};
+    struct proc_info procInfo;
+    OrbisKernelModuleInfo CurrentModuleInfo;
     CurrentModuleInfo.size = sizeof(OrbisKernelModuleInfo);
-    if(!get_module_info(CurrentModuleInfo, "0", &g_module_base, &g_module_size) && (!g_module_base || !g_module_size))
+    if(!get_module_info(CurrentModuleInfo, "0", &module_base, &module_size) && module_base && module_size)
     {
-        NotifyStatic(TEX_ICON_SYSTEM, "Could not find module info for current process");
+        final_printf("Could not find module info for current process\n");
         return -1;
     }
-    final_printf("Module start: 0x%lx 0x%x\n", g_module_base, g_module_size);
-    if (sys_sdk_proc_info(&procInfo) == 0)
-    {
-        strncpy(g_titleid, procInfo.titleid, sizeof(g_titleid));
-        strncpy(g_game_elf, procInfo.name, sizeof(g_game_elf));
-        strncpy(g_game_ver, procInfo.version, sizeof(g_game_ver));
-        make_folders();
-        print_proc_info();
-        get_key_init();
-        return 0;
+    if (sys_sdk_proc_info(&procInfo) == 0) {
+    initImports();
+    sceSysUtilSendSystemNotificationWithText(222, "[GTAV] - ArabicGuy Menu Base v1.0");
+    print_proc_info();
+    OrbisPthread thread;
+    scePthreadCreate(&thread, NULL, my_thread, NULL, "my_thread");
+    scePthreadJoin(thread, NULL);
+    return 0;
     }
-    NotifyStatic(TEX_ICON_SYSTEM, "Unable to get process info from sys_sdk_proc_info");
+    NotifyStatic(TEX_ICON_SYSTEM, "Unable to get process info from " STRINGIFY(sys_sdk_proc_info));
     return -1;
 }
+}
 
-s32 attr_public plugin_unload(s32 argc, const char* argv[]) {
+extern "C" {
+s32 attr_module_hidden module_stop(s64 argc, const void *args) {
     final_printf("[GoldHEN] <%s\\Ver.0x%08x> %s\n", g_pluginName, g_pluginVersion, __func__);
-    return 0;
-}
-
-s32 attr_module_hidden module_start(s64 argc, const void *args)
-{
-    return 0;
-}
-
-s32 attr_module_hidden module_stop(s64 argc, const void *args)
-{
     return 0;
 }
 }

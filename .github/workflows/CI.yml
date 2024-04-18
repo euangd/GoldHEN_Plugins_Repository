@@ -59,9 +59,6 @@ jobs:
       run: |
         wget https://raw.githubusercontent.com/bucanero/oosdk_libraries/master/build_rules.mk -O $OO_PS4_TOOLCHAIN/build_rules.mk
         make install PRX_BUILD=1
-                 rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/string.h
-         rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/strings.h
-         #rm /home/runner/work/GoldHEN_Plugins_Repository/GoldHEN_Plugins_Repository/OpenOrbis/PS4Toolchain/include/c++/v1/string.h
 
     - name: Export path to SDK
       working-directory: SDK
